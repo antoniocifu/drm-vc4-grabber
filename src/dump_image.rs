@@ -61,6 +61,145 @@ fn decimate_image_4(size: (usize, usize), image: &[u32], copy: &mut [u32]) {
     }
 }
 
+
+fn decode_xrgb2101010_image(
+    card: &Card,
+    pitch: u32,
+    size: (u32, u32),
+    handle: u32,
+    modifier: u64, // Añadir el modificador como parámetro
+    verbose: bool,
+) -> Result<RgbImage, SystemError> {
+    let bytes_per_pixel = 4; // Cada pixel es de 4 bytes (32 bits)
+    let length = (pitch * size.1) / bytes_per_pixel; // En elementos u32
+
+    if verbose {
+        println!(
+            "XRGB2101010, size: {:?}, pitch: {}, length: {}, modifier: {}",
+            size, pitch, length, modifier
+        );
+    }
+
+    let mut copy = vec![0u32; length as _];
+    copy_buffer(card, handle, &mut copy, verbose)?;
+
+    let decimate = 16; // Decimar la imagen por 4
+    // let mut img = RgbImage::new(size.0, size.1);
+    let mut dec = RgbImage::new(size.0 / decimate, size.1 / decimate);
+
+
+    for y in 0..size.1 {
+        for x in 0..size.0 {
+            // Si x o y no son múltiplos de decimate, saltar el píxel
+            // Decimar la imagen
+            if x % decimate != 0 || y % decimate != 0 {
+                continue;
+            }
+
+            let index = if modifier == 72057594037927938 { // I915_FORMAT_MOD_Y_TILED
+                calculate_y_tiled_index(x, y, size.0, size.1, pitch)
+            } else {
+                (y * (pitch / bytes_per_pixel) + x) as usize
+            };
+
+            let pixel = copy.get(index).cloned().unwrap_or(0);
+
+            // Extraer los componentes de color de 10 bits
+            let r = ((pixel >> 20) & 0x3FF) as u32;
+            let g = ((pixel >> 10) & 0x3FF) as u32;
+            let b = (pixel & 0x3FF) as u32;
+
+            // Convertir de 10 bits a 8 bits
+            let r = (r * 255 / 1023) as u8;
+            let g = (g * 255 / 1023) as u8;
+            let b = (b * 255 / 1023) as u8;
+
+            // Colocar el píxel en la imagen
+            // img.put_pixel(x, y, image::Rgb([r, g, b]));
+
+            // Decimar la imagen
+            dec.put_pixel(x / decimate, y / decimate, image::Rgb([r, g, b]));
+        }
+    }
+
+    Ok(dec)
+}
+
+fn calculate_y_tiled_indexx(x: u32, y: u32, width: u32, height: u32, pitch: u32) -> usize {
+    // Definimos los parámetros del tile, los mismos que en tu código anterior
+    const TILE_WIDTH: u32 = 32; // 32 píxeles de ancho por tile
+    const TILE_HEIGHT: u32 = 16; // 16 píxeles de alto por tile
+    const BYTES_PER_PIXEL: u32 = 4; // XRGB2101010 es de 4 bytes por píxel
+
+    // Calculamos el índice del tile
+    let tile_x = x / TILE_WIDTH;
+    let tile_y = y / TILE_HEIGHT;
+
+    // Calculamos la posición dentro del tile
+    let within_tile_x = x % TILE_WIDTH;
+    let within_tile_y = y % TILE_HEIGHT;
+
+    // Calculamos cuántos tiles hay por fila de la imagen (ancho en tiles)
+    let tiles_per_row = pitch / (TILE_WIDTH * BYTES_PER_PIXEL);
+
+    // Calculamos el índice del tile en la imagen completa
+    let tile_index = (tile_y * tiles_per_row) + tile_x;
+
+    // Desplazamiento dentro del tile
+    let tile_offset = tile_index * TILE_WIDTH * TILE_HEIGHT * BYTES_PER_PIXEL;
+    let pixel_offset = (within_tile_y * TILE_WIDTH + within_tile_x) * BYTES_PER_PIXEL;
+
+    // Retornamos el índice correcto en el buffer
+    (tile_offset + pixel_offset) as usize
+}
+
+
+// Este tiene el tamaño correcto pero borroso
+fn calculate_y_tiled_index(x: u32, y: u32, width: u32, height: u32, pitch: u32) -> usize {
+    const TILE_WIDTH: u32 = 128;  // 128 bytes (32 píxeles para XRGB2101010)
+    const TILE_HEIGHT: u32 = 32;  // 32 filas de píxeles por tile
+    const TILE_PIXELS: u32 = TILE_WIDTH * TILE_HEIGHT / 4;  // 4096 bytes, o 1024 píxeles por tile
+
+    let tile_x = (x / 32);  // Cada tile tiene 32 píxeles de ancho (32*4 bytes por píxel = 128 bytes por fila)
+    let tile_y = (y / TILE_HEIGHT);
+
+    let within_tile_x = x % 32;
+    let within_tile_y = y % TILE_HEIGHT;
+
+    let num_tiles_in_row = (pitch / TILE_WIDTH); // Número de tiles por fila completa
+
+    let tile_index = tile_y * num_tiles_in_row + tile_x;
+
+    let pixel_offset_within_tile = (within_tile_y * 32 + within_tile_x);
+
+    // Índice final
+    (tile_index * TILE_PIXELS + pixel_offset_within_tile) as usize
+}
+
+
+// Este es más preciso pero se ve doble la imagen
+fn calculate_y_tiled_index1(x: u32, y: u32, width: u32, height: u32, pitch: u32) -> usize {
+    const TILE_WIDTH: usize = 32;
+    const TILE_HEIGHT: usize = 16;
+    const BYTES_PER_PIXEL: usize = 4;
+    const TILE_SIZE: usize = TILE_WIDTH * TILE_HEIGHT * BYTES_PER_PIXEL; // 4 bytes por píxel
+
+    let tile_x = x / TILE_WIDTH as u32;
+    let tile_y = y / TILE_HEIGHT as u32;
+
+    let within_tile_x = x % TILE_WIDTH as u32;
+    let within_tile_y = y % TILE_HEIGHT as u32;
+
+    let tile_index = tile_y * (width / TILE_WIDTH as u32) + tile_x;
+
+    let tile_offset = tile_index as usize * TILE_SIZE; // (Este parametro da la forma de la imagen)
+    let pixel_offset = (within_tile_x * TILE_HEIGHT as u32 + within_tile_y) * 4; // (Este parametro da resolucion)
+
+    (tile_offset + pixel_offset as usize) as usize
+}
+
+
+
 fn decode_p030_image(
     card: &Card,
     size: (usize, usize),
@@ -380,7 +519,14 @@ pub fn dump_framebuffer_to_image(
             fbinfo2.offsets[1] as _,
             verbose
         ),
-
+        DrmFourcc::Xrgb2101010 => decode_xrgb2101010_image(
+            card,
+            fbinfo2.pitches[0],
+            size,
+            fbinfo2.handles[0],
+            fbinfo2.modifier[0],
+            verbose
+        ),
         _ => panic!(
             "Unsupported framebuffer pixel format: {} {:x}",
             fourcc, fbinfo2.pixel_format
