@@ -33,6 +33,30 @@ directly uploads the images.
 5. Compile: `cargo build --release --target armv7-unknown-linux-gnueabihf`
 6. The built file will be at `target/armv7-unknown-linux-gnueabihf/release/drm-v4-capture`
 
+##  Compiling with docker
+
+1. Run `mkdir drm-grabber && cd drm-grabber`
+2. Download Dockerfile: `wget https://github.com/antoniocifu/drm-vc4-grabber/raw/master/Dockerfile`
+3. Build image: `docker build -t drm-grabber .`
+4. Run image: `docker run --name drm-grabber drm-grabber` 
+5. Copy build: `docker cp drm-grabber:/drm-vc4-grabber/target/x86_64-unknown-linux-gnu/release/drm-vc4-grabber drm-vc4-grabber`
+6. Delete container `docker rm drm-grabber`
+
+If you want to deploy more times, you can do this:
+
+4. Run: `mkdir build`
+4. Run image: `docker run -dit --name drm-grabber -v $(pwd)/build/:/build drm-grabber` add -d if you want to deploy more times
+5. Run: `docker exec -it drm-grabber /bin/bash` 
+
+And the process will be:
+```
+apt update
+apt install nano
+nano src/dump_image.rs 
+cargo build --release --target x86_64-unknown-linux-gnu
+cp /drm-vc4-grabber/target/x86_64-unknown-linux-gnu/release/drm-vc4-grabber /build/drm-vc4-grabber
+```
+
 ## Example
 
 The following is an example screen capture in the current codes state.
